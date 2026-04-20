@@ -1,124 +1,96 @@
 const express = require("express");
 const cors = require("cors");
-const sqlite3 = require("sqlite3").verbose();
-const path = require("path");
-const fs = require("fs");
+const { kv } = require("@vercel/kv");
 
 const app = express();
-const PORT = process.env.PORT || 3002;
-
 app.use(cors());
 app.use(express.json());
 
-const dbPath = path.join(__dirname, "database", "cash.db");
-const dbDir = path.dirname(dbPath);
-if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+const CASH_PREFIX = "cash:";
 
-const db = new sqlite3.Database(dbPath);
-
-db.serialize(() => {
-    db.run(`CREATE TABLE IF NOT EXISTS users (
-        userId TEXT PRIMARY KEY,
-        cash INTEGER DEFAULT 0,
-        lastUpdated INTEGER DEFAULT (strftime('%s', 'now') * 1000)
-    )`);
-});
-
-app.get("/api/cash/:userId", (req, res) => {
+app.get("/api/cash/:userId", async (req, res) => {
     const { userId } = req.params;
-    db.get("SELECT * FROM users WHERE userId = ?", [userId], (err, user) => {
-        if (err) return res.status(500).json({ success: false, error: err.message });
-        if (!user) {
-            db.run("INSERT INTO users (userId, cash) VALUES (?, 0)", [userId]);
-            return res.json({ success: true, data: { userId, cash: 0 } });
-        }
-        res.json({ success: true, data: user });
-    });
+    try {
+        const cash = await kv.get(`${CASH_PREFIX}${userId}`);
+        const data = { userId, cash: cash !== null ? Number(cash) : 0 };
+        res.json({ success: true, data });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
-app.post("/api/cash/:userId", (req, res) => {
+app.post("/api/cash/:userId", async (req, res) => {
     const { userId } = req.params;
     const { cash } = req.body;
     if (cash === undefined || isNaN(cash)) {
         return res.status(400).json({ success: false, error: "Invalid cash amount" });
     }
-    db.run("UPDATE users SET cash = ?, lastUpdated = ? WHERE userId = ?", 
-        [cash, Date.now(), userId], 
-        function(err) {
-            if (err) return res.status(500).json({ success: false, error: err.message });
-            db.get("SELECT * FROM users WHERE userId = ?", [userId], (e, user) => {
-                if (e) return res.status(500).json({ success: false, error: e.message });
-                res.json({ success: true, data: user });
-            });
-        });
+    try {
+        await kv.set(`${CASH_PREFIX}${userId}`, cash);
+        res.json({ success: true, data: { userId, cash } });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
-app.post("/api/cash/:userId/add", (req, res) => {
+app.post("/api/cash/:userId/add", async (req, res) => {
     const { userId } = req.params;
     const { amount } = req.body;
     if (!amount || isNaN(amount) || amount <= 0) {
         return res.status(400).json({ success: false, error: "Invalid amount" });
     }
-    db.get("SELECT cash FROM users WHERE userId = ?", [userId], (err, user) => {
-        if (err) return res.status(500).json({ success: false, error: err.message });
-        if (!user) {
-            db.run("INSERT INTO users (userId, cash) VALUES (?, ?)", [userId, amount]);
-            return res.json({ success: true, data: { userId, cash: amount } });
-        }
-        const newCash = user.cash + amount;
-        db.run("UPDATE users SET cash = ?, lastUpdated = ? WHERE userId = ?", 
-            [newCash, Date.now(), userId], 
-            (updateErr) => {
-                if (updateErr) return res.status(500).json({ success: false, error: updateErr.message });
-                res.json({ success: true, data: { userId, cash: newCash } });
-            });
-    });
+    try {
+        const current = await kv.get(`${CASH_PREFIX}${userId}`);
+        const newCash = (current !== null ? Number(current) : 0) + amount;
+        await kv.set(`${CASH_PREFIX}${userId}`, newCash);
+        res.json({ success: true, data: { userId, cash: newCash } });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
-app.post("/api/cash/:userId/subtract", (req, res) => {
+app.post("/api/cash/:userId/subtract", async (req, res) => {
     const { userId } = req.params;
     const { amount } = req.body;
     if (!amount || isNaN(amount) || amount <= 0) {
         return res.status(400).json({ success: false, error: "Invalid amount" });
     }
-    db.get("SELECT cash FROM users WHERE userId = ?", [userId], (err, user) => {
-        if (err) return res.status(500).json({ success: false, error: err.message });
-        if (!user) {
+    try {
+        const current = await kv.get(`${CASH_PREFIX}${userId}`);
+        if (current === null) {
             return res.status(404).json({ success: false, error: "User not found" });
         }
-        if (user.cash < amount) {
+        const currentCash = Number(current);
+        if (currentCash < amount) {
             return res.status(400).json({ success: false, error: "Insufficient cash" });
         }
-        const newCash = user.cash - amount;
-        db.run("UPDATE users SET cash = ?, lastUpdated = ? WHERE userId = ?", 
-            [newCash, Date.now(), userId], 
-            (updateErr) => {
-                if (updateErr) return res.status(500).json({ success: false, error: updateErr.message });
-                res.json({ success: true, data: { userId, cash: newCash } });
-            });
-    });
+        const newCash = currentCash - amount;
+        await kv.set(`${CASH_PREFIX}${userId}`, newCash);
+        res.json({ success: true, data: { userId, cash: newCash } });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
-app.get("/api/cash/top", (req, res) => {
+app.get("/api/cash/top", async (req, res) => {
     const limit = parseInt(req.query.limit) || 25;
-    db.all("SELECT userId, cash FROM users ORDER BY cash DESC LIMIT ?", [limit], (err, rows) => {
-        if (err) return res.status(500).json({ success: false, error: err.message });
-        res.json({ success: true, data: rows });
-    });
+    try {
+        const keys = await kv.keys(`${CASH_PREFIX}*`);
+        const users = [];
+        for (const key of keys) {
+            const userId = key.replace(CASH_PREFIX, "");
+            const cash = Number(await kv.get(key)) || 0;
+            users.push({ userId, cash });
+        }
+        users.sort((a, b) => b.cash - a.cash);
+        res.json({ success: true, data: users.slice(0, limit) });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
 app.get("/", (req, res) => {
-    res.send(`
-        <h1>Cash Management API</h1>
-        <p>Endpoints:</p>
-        <ul>
-            <li>GET /api/cash/:userId</li>
-            <li>POST /api/cash/:userId (body: { cash })</li>
-            <li>POST /api/cash/:userId/add (body: { amount })</li>
-            <li>POST /api/cash/:userId/subtract (body: { amount })</li>
-            <li>GET /api/cash/top?limit=25</li>
-        </ul>
-    `);
+    res.send(`<h1>Cash Management API</h1><p>Serverless with Vercel KV</p>`);
 });
 
-app.listen(PORT, () => console.log(`Cash API running on port ${PORT}`));
+module.exports = app;
