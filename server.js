@@ -90,7 +90,7 @@ app.get("/api/cash/top", async (req, res) => {
 });
 
 app.get("/", (req, res) => {
-    res.send(`<h1>Cash Management API</h1><p>Serverless with Vercel KV</p>`);
+    res.send(`<h1>Cash Management API</h1><p>Serverless avec Vercel KV</p>`);
 });
 
 module.exports = app;
