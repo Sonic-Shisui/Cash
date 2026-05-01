@@ -1,15 +1,15 @@
 {
   "name": "cash-api",
   "version": "1.0.0",
-  "description": "API de gestion de cash avec SQLite",
-  "main": "server.js",
+  "description": "API de cash avec Upstash Redis",
+  "main": "api/index.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node api/index.js"
   },
   "dependencies": {
+    "@vercel/kv": "^1.0.1",
     "cors": "^2.8.5",
-    "express": "^4.18.2",
-    "sqlite3": "^5.1.6"
+    "express": "^4.18.2"
   },
   "engines": {
     "node": ">=18.0.0"
