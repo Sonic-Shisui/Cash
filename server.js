@@ -23,15 +23,17 @@ app.get("/api/cash/:userId", async (req, res) => {
     }
 });
 
-app.post("/api/cash/:userId/set", async (req, res) => {
+app.post("/api/cash/:userId", async (req, res) => {
     const { userId } = req.params;
     const { cash } = req.body;
     if (cash === undefined || isNaN(cash)) {
-        return res.status(400).json({ success: false, error: "Montant invalide" });
+        return res.status(400).json({ success: false, error: "Montant cash invalide" });
     }
     try {
-        await kv.set(`${CASH_PREFIX}${userId}`, cash);
-        res.json({ success: true, data: { userId, cash } });
+        await kv.set(`${CASH_PREFIX}${userId}`, Number(cash));
+        const savedCash = await kv.get(`${CASH_PREFIX}${userId}`);
+        console.log(`[CASH API] Set ${userId} = ${savedCash}`);
+        res.json({ success: true, data: { userId, cash: Number(savedCash) } });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
