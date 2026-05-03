@@ -9,7 +9,7 @@ app.use(express.json());
 const CASH_PREFIX = "cash:";
 
 app.get("/", (req, res) => {
-    res.json({ message: "Cash API opérationnelle", version: "2.0.0" });
+    res.json({ message: "Cash API opérationnelle", version: "2.1.0" });
 });
 
 app.get("/api/cash/:userId", async (req, res) => {
@@ -32,7 +32,6 @@ app.post("/api/cash/:userId", async (req, res) => {
     try {
         await kv.set(`${CASH_PREFIX}${userId}`, Number(cash));
         const savedCash = await kv.get(`${CASH_PREFIX}${userId}`);
-        console.log(`[CASH API] Set ${userId} = ${savedCash}`);
         res.json({ success: true, data: { userId, cash: Number(savedCash) } });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -79,7 +78,7 @@ app.post("/api/cash/:userId/subtract", async (req, res) => {
 });
 
 app.get("/api/cash/top", async (req, res) => {
-    const limit = parseInt(req.query.limit) || 25;
+    const limit = parseInt(req.query.limit) || 50;
     try {
         const keys = await kv.keys(`${CASH_PREFIX}*`);
         const users = [];
@@ -89,8 +88,11 @@ app.get("/api/cash/top", async (req, res) => {
             users.push({ userId, cash });
         }
         users.sort((a, b) => b.cash - a.cash);
-        res.json({ success: true, data: users.slice(0, limit) });
+        const result = users.slice(0, limit);
+        console.log(`[TOP] ${keys.length} clés trouvées, ${result.length} utilisateurs retournés`);
+        res.json({ success: true, data: result });
     } catch (error) {
+        console.error("Erreur /api/cash/top:", error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
