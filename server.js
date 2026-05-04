@@ -8,8 +8,35 @@ app.use(express.json());
 
 const CASH_PREFIX = "cash:";
 
+function parseCashData(raw) {
+    if (raw === null || raw === undefined) {
+        return { cash: 0, name: null };
+    }
+    if (typeof raw === "number") {
+        return { cash: raw, name: null };
+    }
+    if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
+        return {
+            cash: Number(raw.cash) || 0,
+            name: raw.name || null
+        };
+    }
+    if (typeof raw === "string") {
+        try {
+            const parsed = JSON.parse(raw);
+            return {
+                cash: Number(parsed.cash) || 0,
+                name: parsed.name || null
+            };
+        } catch (e) {
+            return { cash: Number(raw) || 0, name: null };
+        }
+    }
+    return { cash: 0, name: null };
+}
+
 app.get("/", (req, res) => {
-    res.json({ message: "Cash API opérationnelle", version: "3.1.0" });
+    res.json({ message: "Cash API opérationnelle", version: "3.4.0" });
 });
 
 app.get("/api/cash/top", async (req, res) => {
@@ -20,24 +47,7 @@ app.get("/api/cash/top", async (req, res) => {
         for (const key of keys) {
             const userId = key.replace(CASH_PREFIX, "");
             const raw = await kv.get(key);
-            let cash = 0;
-            let name = null;
-            if (raw !== null && raw !== undefined) {
-                if (typeof raw === "number") {
-                    cash = raw;
-                } else if (typeof raw === "string") {
-                    try {
-                        const parsed = JSON.parse(raw);
-                        cash = Number(parsed.cash) || 0;
-                        name = parsed.name || null;
-                    } catch {
-                        cash = Number(raw) || 0;
-                    }
-                } else if (typeof raw === "object") {
-                    cash = Number(raw.cash) || 0;
-                    name = raw.name || null;
-                }
-            }
+            const { cash, name } = parseCashData(raw);
             users.push({ userId, cash, name });
         }
         users.sort((a, b) => b.cash - a.cash);
@@ -51,24 +61,8 @@ app.get("/api/cash/:userId", async (req, res) => {
     const { userId } = req.params;
     try {
         const raw = await kv.get(`${CASH_PREFIX}${userId}`);
-        let data;
-        if (raw === null || raw === undefined) {
-            data = { userId, cash: 0, name: null };
-        } else if (typeof raw === "number") {
-            data = { userId, cash: raw, name: null };
-        } else if (typeof raw === "string") {
-            try {
-                const parsed = JSON.parse(raw);
-                data = { userId, cash: Number(parsed.cash) || 0, name: parsed.name || null };
-            } catch {
-                data = { userId, cash: Number(raw) || 0, name: null };
-            }
-        } else if (typeof raw === "object") {
-            data = { userId, cash: Number(raw.cash) || 0, name: raw.name || null };
-        } else {
-            data = { userId, cash: 0, name: null };
-        }
-        res.json({ success: true, data });
+        const { cash, name } = parseCashData(raw);
+        res.json({ success: true, data: { userId, cash, name } });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
@@ -77,15 +71,12 @@ app.get("/api/cash/:userId", async (req, res) => {
 app.post("/api/cash/:userId", async (req, res) => {
     const { userId } = req.params;
     const { cash, name } = req.body;
-    if (cash === undefined || isNaN(Number(cash))) {
-        return res.status(400).json({ success: false, error: "Montant cash invalide" });
-    }
     try {
-        const data = { cash: String(cash) };
+        const currentCash = (cash !== undefined && cash !== null) ? Number(cash) : 0;
+        const data = { cash: String(currentCash) };
         if (name !== undefined && name !== null) data.name = name;
         await kv.set(`${CASH_PREFIX}${userId}`, JSON.stringify(data));
-        const saved = JSON.parse(await kv.get(`${CASH_PREFIX}${userId}`));
-        res.json({ success: true, data: { userId, cash: Number(saved.cash), name: saved.name || null } });
+        res.json({ success: true, data: { userId, cash: currentCash, name: name || null } });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
@@ -94,30 +85,14 @@ app.post("/api/cash/:userId", async (req, res) => {
 app.post("/api/cash/:userId/add", async (req, res) => {
     const { userId } = req.params;
     const { amount, name } = req.body;
-    if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
+    const numAmount = Number(amount);
+    if (!numAmount || numAmount <= 0) {
         return res.status(400).json({ success: false, error: "Montant invalide" });
     }
     try {
         const raw = await kv.get(`${CASH_PREFIX}${userId}`);
-        let currentCash = 0;
-        let currentName = null;
-        if (raw !== null && raw !== undefined) {
-            if (typeof raw === "number") {
-                currentCash = raw;
-            } else if (typeof raw === "string") {
-                try {
-                    const parsed = JSON.parse(raw);
-                    currentCash = Number(parsed.cash) || 0;
-                    currentName = parsed.name || null;
-                } catch {
-                    currentCash = Number(raw) || 0;
-                }
-            } else if (typeof raw === "object") {
-                currentCash = Number(raw.cash) || 0;
-                currentName = raw.name || null;
-            }
-        }
-        const newCash = currentCash + Number(amount);
+        const { cash: currentCash, name: currentName } = parseCashData(raw);
+        const newCash = currentCash + numAmount;
         const data = { cash: String(newCash) };
         if (name !== undefined && name !== null) data.name = name;
         else if (currentName) data.name = currentName;
@@ -131,33 +106,17 @@ app.post("/api/cash/:userId/add", async (req, res) => {
 app.post("/api/cash/:userId/subtract", async (req, res) => {
     const { userId } = req.params;
     const { amount } = req.body;
-    if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
+    const numAmount = Number(amount);
+    if (!numAmount || numAmount <= 0) {
         return res.status(400).json({ success: false, error: "Montant invalide" });
     }
     try {
         const raw = await kv.get(`${CASH_PREFIX}${userId}`);
-        let currentCash = 0;
-        let currentName = null;
-        if (raw !== null && raw !== undefined) {
-            if (typeof raw === "number") {
-                currentCash = raw;
-            } else if (typeof raw === "string") {
-                try {
-                    const parsed = JSON.parse(raw);
-                    currentCash = Number(parsed.cash) || 0;
-                    currentName = parsed.name || null;
-                } catch {
-                    currentCash = Number(raw) || 0;
-                }
-            } else if (typeof raw === "object") {
-                currentCash = Number(raw.cash) || 0;
-                currentName = raw.name || null;
-            }
-        }
-        if (currentCash < Number(amount)) {
+        const { cash: currentCash, name: currentName } = parseCashData(raw);
+        if (currentCash < numAmount) {
             return res.status(400).json({ success: false, error: "Solde insuffisant" });
         }
-        const newCash = currentCash - Number(amount);
+        const newCash = currentCash - numAmount;
         const data = { cash: String(newCash) };
         if (currentName) data.name = currentName;
         await kv.set(`${CASH_PREFIX}${userId}`, JSON.stringify(data));
